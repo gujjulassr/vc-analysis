@@ -11,35 +11,29 @@ Builds:
                           resolved via FILE_SID -> sid -> speaker_map.txt ->
                           voicebank/<artist>/ (the N LONGEST wav files)
 
-Usage:
+ONE LANGUAGE PER RUN — the language lives in the arguments, not in this script.
+Run it once per language with that language's outputs dir, voicebank,
+speaker_map and mapping file.
+
+Usage (example for one language):
   python arrange_eval_folders.py \
-      --tracks_dir GoodDoctorSPNIGuidedTracks \
-      --outputs hindi=GoodDoctorSPNIGuidedTracks/hindi_out \
-      --outputs marathi=GoodDoctorSPNIGuidedTracks/marathi_out \
-      --voicebank voicebank/Hindi \
-      --speaker_map logs/rvc_train_hindi_attn_voco/speaker_map.txt \
-      --eval_dir eval_hindi
+      --tracks_dir <guided_tracks_dir> \
+      --outputs converted=<dir with the converted full-length outputs> \
+      --voicebank <voicebank/LANGUAGE> \
+      --speaker_map <logs/MODEL/speaker_map.txt> \
+      --file_sid <language_map.txt: one 'base=sid' per line> \
+      --eval_dir <eval_LANGUAGE>
 """
 
 import argparse, glob, os, shutil
 
 import soundfile as sf
 
-# ======= EDIT ME: track base name -> sid used at conversion time =======
+# track base name -> sid used at conversion time.
+# Prefer --file_sid <file>; this inline dict is only a fallback/example.
 FILE_SID = {
-    "Shaun_01": 30,
-    "Aoki_01": 24,
-    "Melendez_01": 1,
-    "Claire_01": 8,
-    "Preston_01": 8,
-    "Jared_01": 12,
-    "Andrews_01": 19,
-    "Male Doctor_01": 21,
-    "Male TSA Officer 01_01": 20,
-    "Ethan_01": 5,
-    "Sarah_01": 7,
+    # "Shaun_01": 30,
 }
-# =======================================================================
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--tracks_dir", required=True)
