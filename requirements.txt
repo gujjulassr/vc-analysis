@@ -1,0 +1,8 @@
+openai-whisper
+jiwer
+resemblyzer
+scipy
+librosa
+soundfile
+silero-vad
+numpy
