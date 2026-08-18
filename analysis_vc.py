@@ -21,14 +21,28 @@ Usage (ONE LANGUAGE PER RUN; --lang is the Whisper code: hi, mr, ta, ...):
       --source <eval_LANGUAGE>/source_wavs \
       --ref <eval_LANGUAGE>/ref_wavs \
       --system converted=<eval_LANGUAGE>/infer_out_converted \
-      --lang <code> --whisper medium --out results_LANGUAGE
+      --lang <code> --whisper medium --out results_LANGUAGE \
+      [--transcribe_refs]   # also ASR the reference wavs (slow: refs are long)
 
 Folder rules:
-  source/<name>.wav               the source utterances
-  each system dir/<name>.wav      SAME filenames = converted outputs
-  ref/<name>.wav if it exists     per-utterance target reference,
-  else                            ALL wavs in ref/ are averaged into one
-                                  target-speaker centroid.
+  source/<name>.wav               source chunks, e.g. Shaun_01_003.wav
+  each system dir/<name>.wav      SAME filenames = converted chunks
+  target reference lookup, in order:
+    1. ref/<name>.wav                exact per-chunk reference
+    2. ref/<base>__ref*.wav          per-track refs from arrange_eval_folders.py
+                                     (base = chunk name minus _NNN) -> averaged
+    3. otherwise                     ALL wavs in ref/ averaged into one centroid
+
+Outputs (<out> = --out prefix):
+  <out>_per_utt.csv       every chunk x system x metric (raw data)
+  <out>_averages.csv      one row per system: mean/std of every metric
+  <out>_summary.txt       aggregate table (nan-safe), Wilcoxon tests,
+                          5 worst utterances by CER with transcripts
+  <out>_transcripts.txt   full SRC vs system transcripts per chunk
+                          (+ REF transcripts when --transcribe_refs)
+
+Notes: text normalization keeps Unicode combining marks (Devanagari/Tamil
+matras survive); chunks with empty source ASR are excluded from CER/WER.
 """
 
 import argparse, csv, glob, os, re, unicodedata
