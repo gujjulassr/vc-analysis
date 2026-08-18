@@ -48,9 +48,22 @@ ap.add_argument("--voicebank", required=True)
 ap.add_argument("--speaker_map", required=True)
 ap.add_argument("--eval_dir", required=True)
 ap.add_argument("--refs_per_spk", type=int, default=5)
+ap.add_argument("--file_sid", default=None,
+                help="optional mapping file, one 'base=sid' per line; "
+                     "overrides the FILE_SID dict above")
 args = ap.parse_args()
 
 systems = [s.split("=", 1) for s in args.outputs]
+
+if args.file_sid:
+    FILE_SID = {}
+    with open(args.file_sid) as f:
+        for line in f:
+            line = line.strip()
+            if line and "=" in line:
+                base, sid = line.rsplit("=", 1)
+                FILE_SID[base.strip()] = int(sid.strip())
+    print(f"file_sid: {len(FILE_SID)} tracks from {args.file_sid}")
 
 # sid -> artist folder name  ("30  Artist-9" -> {30: "Artist-9"})
 sid2artist = {}
