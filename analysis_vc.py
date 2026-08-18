@@ -101,10 +101,26 @@ def cos(a, b):
 
 import jiwer
 
-# ---------------- target centroid (fallback ref) ----------------
+# ---------------- target references ----------------
+# lookup order per chunk <base>_<idx>.wav:
+#   1. exact ref/<name>.wav
+#   2. per-track refs ref/<base>__ref*.wav  (from prepare_guided_eval.py)
+#   3. global centroid of everything in ref/
 ref_wavs = sorted(glob.glob(os.path.join(args.ref, "*.wav")))
 assert ref_wavs, f"no wavs in {args.ref}"
 centroid = np.mean([emb(p) for p in ref_wavs], axis=0)
+
+_tgt_cache = {}
+def target_emb(name):
+    exact = os.path.join(args.ref, name)
+    if os.path.exists(exact):
+        return emb(exact)
+    base = re.sub(r"_\d+\.wav$", "", name)
+    if base not in _tgt_cache:
+        cand = sorted(glob.glob(os.path.join(args.ref, base + "__*.wav")))
+        _tgt_cache[base] = (np.mean([emb(p) for p in cand], axis=0)
+                            if cand else centroid)
+    return _tgt_cache[base]
 
 # ---------------- matched file list ----------------
 names = set(os.path.basename(p) for p in glob.glob(os.path.join(args.source, "*.wav")))
@@ -122,8 +138,7 @@ for i, name in enumerate(names):
     src_text = transcribe(srcp)
     texts[("src", name)] = src_text
     src_e = emb(srcp)
-    refp = os.path.join(args.ref, name)
-    tgt_e = emb(refp) if os.path.exists(refp) else centroid
+    tgt_e = target_emb(name)
 
     for sysname, d in systems:
         outp = os.path.join(d, name)

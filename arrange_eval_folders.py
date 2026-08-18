@@ -1,0 +1,122 @@
+#!/usr/bin/env python
+"""
+arrange_eval_folders.py — ONLY arranges audios into the eval folder layout.
+No cutting, no processing. Chunking is done afterwards by prepare_eval_chunks.py.
+
+Builds:
+  eval_dir/
+    source_full/          copies of the source guided tracks (FILE_SID keys)
+    out_full_<system>/    copies of each system's full-length outputs
+    ref_wavs/             per-track target references named <base>__refN.wav,
+                          resolved via FILE_SID -> sid -> speaker_map.txt ->
+                          voicebank/<artist>/ (the N LONGEST wav files)
+
+Usage:
+  python arrange_eval_folders.py \
+      --tracks_dir GoodDoctorSPNIGuidedTracks \
+      --outputs hindi=GoodDoctorSPNIGuidedTracks/hindi_out \
+      --outputs marathi=GoodDoctorSPNIGuidedTracks/marathi_out \
+      --voicebank voicebank/Hindi \
+      --speaker_map logs/rvc_train_hindi_attn_voco/speaker_map.txt \
+      --eval_dir eval_hindi
+"""
+
+import argparse, glob, os, shutil
+
+import soundfile as sf
+
+# ======= EDIT ME: track base name -> sid used at conversion time =======
+FILE_SID = {
+    "Shaun_01": 30,
+    "Aoki_01": 24,
+    "Melendez_01": 1,
+    "Claire_01": 8,
+    "Preston_01": 8,
+    "Jared_01": 12,
+    "Andrews_01": 19,
+    "Male Doctor_01": 21,
+    "Male TSA Officer 01_01": 20,
+    "Ethan_01": 5,
+    "Sarah_01": 7,
+}
+# =======================================================================
+
+ap = argparse.ArgumentParser()
+ap.add_argument("--tracks_dir", required=True)
+ap.add_argument("--outputs", action="append", required=True, help="name=dir (repeat)")
+ap.add_argument("--voicebank", required=True)
+ap.add_argument("--speaker_map", required=True)
+ap.add_argument("--eval_dir", required=True)
+ap.add_argument("--refs_per_spk", type=int, default=5)
+args = ap.parse_args()
+
+systems = [s.split("=", 1) for s in args.outputs]
+
+# sid -> artist folder name  ("30  Artist-9" -> {30: "Artist-9"})
+sid2artist = {}
+with open(args.speaker_map) as f:
+    for line in f:
+        parts = line.strip().split(maxsplit=1)
+        if len(parts) == 2 and parts[0].isdigit():
+            sid2artist[int(parts[0])] = parts[1].strip()
+print(f"speaker_map: {len(sid2artist)} sids")
+
+src_dir = os.path.join(args.eval_dir, "source_full")
+ref_dir = os.path.join(args.eval_dir, "ref_wavs")
+os.makedirs(src_dir, exist_ok=True)
+os.makedirs(ref_dir, exist_ok=True)
+out_dirs = {}
+for name, _ in systems:
+    out_dirs[name] = os.path.join(args.eval_dir, f"out_full_{name}")
+    os.makedirs(out_dirs[name], exist_ok=True)
+
+def longest_wavs(folder, n):
+    """n longest wav files (by duration) under folder, recursive."""
+    wavs = glob.glob(os.path.join(folder, "**", "*.wav"), recursive=True)
+    with_dur = []
+    for p in wavs:
+        try:
+            with_dur.append((sf.info(p).duration, p))
+        except Exception:
+            pass
+    with_dur.sort(key=lambda x: -x[0])
+    return with_dur[:n]
+
+copied = 0
+for base, sid in FILE_SID.items():
+    srcp = os.path.join(args.tracks_dir, base + ".wav")
+    if not os.path.exists(srcp):
+        print(f"[skip] missing source: {srcp}")
+        continue
+    artist = sid2artist.get(sid)
+    if artist is None:
+        print(f"[skip] {base}: sid {sid} not in speaker_map")
+        continue
+
+    ok = True
+    for name, d in systems:
+        outp = os.path.join(d, base + ".wav")
+        if not os.path.exists(outp):
+            print(f"[skip] {base}: missing output {outp}")
+            ok = False
+    if not ok:
+        continue
+
+    shutil.copy2(srcp, os.path.join(src_dir, base + ".wav"))
+    for name, d in systems:
+        shutil.copy2(os.path.join(d, base + ".wav"),
+                     os.path.join(out_dirs[name], base + ".wav"))
+
+    refs = longest_wavs(os.path.join(args.voicebank, artist), args.refs_per_spk)
+    if not refs:
+        print(f"[warn] {base}: no wavs for artist '{artist}'")
+    for j, (dur, p) in enumerate(refs):
+        shutil.copy2(p, os.path.join(ref_dir, f"{base}__ref{j}.wav"))
+
+    print(f"{base}: sid={sid} -> '{artist}' | {len(refs)} refs "
+          f"(longest {refs[0][0]:.1f}s)" if refs else f"{base}: sid={sid} -> '{artist}'")
+    copied += 1
+
+print(f"\nDONE: {copied} tracks arranged in {args.eval_dir}")
+print("Next: chunk with prepare_eval_chunks.py (use --aligned for the outputs),")
+print("then run analysis_vc.py.")

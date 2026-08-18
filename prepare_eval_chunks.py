@@ -12,6 +12,12 @@ paired samples per track (stronger Wilcoxon).
 
 Install:  pip install silero-vad soundfile librosa
 Usage:    python prepare_eval_chunks.py --in_dir raw_tracks --out_dir source_wavs
+
+Aligned outputs (converted files time-aligned with the sources): cut them at the
+SAME source timestamps so chunk filenames pair up exactly:
+  python prepare_eval_chunks.py --in_dir eval/source_full --out_dir eval/source_wavs \
+      --aligned eval/out_full_hindi=eval/infer_out_hindi \
+      --aligned eval/out_full_marathi=eval/infer_out_marathi
 """
 
 import argparse, glob, os
@@ -28,9 +34,17 @@ ap.add_argument("--out_dir", required=True, help="output folder for speech chunk
 ap.add_argument("--min_len", type=float, default=2.0, help="drop chunks shorter (s)")
 ap.add_argument("--max_len", type=float, default=20.0, help="split chunks longer (s)")
 ap.add_argument("--merge_gap", type=float, default=0.6, help="merge if gap < (s)")
+ap.add_argument("--aligned", action="append", default=[],
+                help="indir=outdir: full-length dirs time-aligned with the source; "
+                     "cut at the SOURCE's timestamps (repeatable)")
 args = ap.parse_args()
 
 os.makedirs(args.out_dir, exist_ok=True)
+aligned = []
+for s in args.aligned:
+    indir, outdir = s.split("=", 1)
+    os.makedirs(outdir, exist_ok=True)
+    aligned.append((indir, outdir))
 vad = load_silero_vad()
 total = 0
 
@@ -72,6 +86,24 @@ for path in sorted(glob.glob(os.path.join(args.in_dir, "*.wav"))):
     for i, (a, b) in enumerate(chunks):
         out = os.path.join(args.out_dir, f"{base}_{i:03d}.wav")
         sf.write(out, audio[a:b], sr, subtype="PCM_16")
+
+    # cut aligned full-length outputs at the SAME source timestamps
+    for indir, outdir in aligned:
+        ap_ = os.path.join(indir, f"{base}.wav")
+        if not os.path.exists(ap_):
+            print(f"  [warn] no aligned file {ap_}")
+            continue
+        oa, osr = sf.read(ap_)
+        if oa.ndim > 1:
+            oa = oa.mean(1)
+        oa = oa.astype(np.float32)
+        if abs(len(oa) / osr - len(audio) / sr) > 0.5:
+            print(f"  [warn] {base}: aligned duration differs "
+                  f"{abs(len(oa)/osr - len(audio)/sr):.2f}s ({indir})")
+        for i, (a, b) in enumerate(chunks):
+            a2, b2 = int(a / sr * osr), int(b / sr * osr)
+            sf.write(os.path.join(outdir, f"{base}_{i:03d}.wav"),
+                     oa[a2:b2], osr, subtype="PCM_16")
     print(f"{base}: {len(chunks)} chunks "
           f"({sum(b - a for a, b in chunks) / sr:.1f}s speech of {len(audio) / sr:.1f}s)")
     total += len(chunks)
