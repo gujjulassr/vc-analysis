@@ -16,13 +16,12 @@ SAME source utterances, with:
 Install once:
   pip install openai-whisper jiwer resemblyzer scipy librosa soundfile
 
-Usage:
+Usage (ONE LANGUAGE PER RUN; --lang is the Whisper code: hi, mr, ta, ...):
   python analysis_vc.py \
-      --source source_wavs \
-      --ref target_ref_wavs \
-      --system losses=infer_out_losses \
-      --system v2attn=infer_out_v2 \
-      --lang mr --whisper medium --out results_marathi
+      --source <eval_LANGUAGE>/source_wavs \
+      --ref <eval_LANGUAGE>/ref_wavs \
+      --system converted=<eval_LANGUAGE>/infer_out_converted \
+      --lang <code> --whisper medium --out results_LANGUAGE
 
 Folder rules:
   source/<name>.wav               the source utterances
