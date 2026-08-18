@@ -73,12 +73,12 @@ from resemblyzer import VoiceEncoder, preprocess_wav
 spk = VoiceEncoder(device)
 
 # ---------------- helpers ----------------
-_punct = re.compile(r"[^\w\s]", re.UNICODE)
-
 def norm_text(t):
+    # strip only real punctuation/symbols (Unicode categories P*/S*);
+    # KEEPS combining marks -> Devanagari/Tamil matras survive
     t = unicodedata.normalize("NFC", t)
-    t = _punct.sub(" ", t.lower())
-    return " ".join(t.split())
+    t = "".join(" " if unicodedata.category(c)[0] in "PS" else c for c in t)
+    return " ".join(t.lower().split())
 
 _asr_cache = {}
 def transcribe(path):
@@ -177,24 +177,30 @@ lines.append(f"{'system':12s} " + " ".join(f"{m:>14s}" for m in METRICS))
 for sysname, _ in systems:
     vals = [col(sysname, m) for m in METRICS]
     lines.append(f"{sysname:12s} " + " ".join(
-        f"{v.mean():7.3f}±{v.std():5.3f}" for v in vals))
+        f"{np.nanmean(v):7.3f}±{np.nanstd(v):5.3f}" for v in vals))
+n_bad = int(np.isnan(col(systems[0][0], "cer")).sum())
+if n_bad:
+    lines.append(f"(note: {n_bad} chunks had empty source ASR -> excluded from CER/WER)")
 
 base = systems[0][0]
 for sysname, _ in systems[1:]:
     lines.append(f"\nWilcoxon paired: {base} vs {sysname}  (p<0.05 = significant)")
     for m in METRICS:
         a, b = col(base, m), col(sysname, m)
+        ok = ~(np.isnan(a) | np.isnan(b))
+        a, b = a[ok], b[ok]
         try:
-            p = stats.wilcoxon(a, b).pvalue if not np.allclose(a, b) else 1.0
+            p = stats.wilcoxon(a, b).pvalue if len(a) and not np.allclose(a, b) else 1.0
         except ValueError:
             p = float("nan")
         lines.append(f"  {m:10s} {base}={a.mean():.3f} {sysname}={b.mean():.3f} "
-                     f"diff={b.mean() - a.mean():+.4f}  p={p:.4f}")
+                     f"diff={b.mean() - a.mean():+.4f}  p={p:.4f} (n={len(a)})")
 
 # ---------------- worst cases: WHERE pronunciation breaks ----------------
 for sysname, _ in systems:
     lines.append(f"\n===== {sysname}: 5 worst utterances by CER =====")
-    worst = sorted((r for r in rows if r["system"] == sysname),
+    worst = sorted((r for r in rows
+                    if r["system"] == sysname and not np.isnan(r["cer"])),
                    key=lambda r: -r["cer"])[:5]
     for r in worst:
         lines.append(f"[{r['name']}] CER={r['cer']:.3f} SECS_tgt={r['secs_tgt']:.3f}")
