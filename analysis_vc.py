@@ -47,6 +47,9 @@ ap.add_argument("--system", action="append", required=True,
 ap.add_argument("--lang", default="mr", help="ASR language code (mr/ta/hi)")
 ap.add_argument("--whisper", default="medium", help="whisper model size")
 ap.add_argument("--out", default="results", help="output file prefix")
+ap.add_argument("--transcribe_refs", action="store_true",
+                help="also ASR the reference wavs into the transcripts file "
+                     "(slow: refs are long files)")
 args = ap.parse_args()
 
 systems = []
@@ -203,3 +206,22 @@ print("\n" + report)
 with open(f"{args.out}_summary.txt", "w") as f:
     f.write(report + "\n")
 print(f"\nwrote {args.out}_summary.txt")
+
+# ---------------- full transcripts dump: SRC vs each system (vs REF) ----------------
+tpath = f"{args.out}_transcripts.txt"
+with open(tpath, "w") as f:
+    cur = None
+    for name in names:
+        base = re.sub(r"_\d+\.wav$", "", name)
+        if base != cur:
+            f.write(f"\n========== {base} ==========\n")
+            if args.transcribe_refs:
+                for rp in sorted(glob.glob(os.path.join(args.ref, base + "__*.wav"))):
+                    print(f"transcribing ref {os.path.basename(rp)} ...")
+                    f.write(f"REF [{os.path.basename(rp)}]:\n  {transcribe(rp)}\n")
+            cur = base
+        f.write(f"\n[{name}]\n")
+        f.write(f"  SRC : {texts[('src', name)]}\n")
+        for sysname, _ in systems:
+            f.write(f"  {sysname.upper():4s}: {texts[(sysname, name)]}\n")
+print(f"wrote {tpath}")
