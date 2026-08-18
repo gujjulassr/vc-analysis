@@ -207,6 +207,22 @@ with open(f"{args.out}_summary.txt", "w") as f:
     f.write(report + "\n")
 print(f"\nwrote {args.out}_summary.txt")
 
+# ---------------- averages CSV (one row per system) ----------------
+apath = f"{args.out}_averages.csv"
+with open(apath, "w", newline="") as f:
+    w = csv.writer(f)
+    header = ["system", "n"]
+    for m in METRICS:
+        header += [f"{m}_mean", f"{m}_std"]
+    w.writerow(header)
+    for sysname, _ in systems:
+        row = [sysname, len(col(sysname, METRICS[0]))]
+        for m in METRICS:
+            v = col(sysname, m)
+            row += [f"{np.nanmean(v):.4f}", f"{np.nanstd(v):.4f}"]
+        w.writerow(row)
+print(f"wrote {apath}")
+
 # ---------------- full transcripts dump: SRC vs each system (vs REF) ----------------
 tpath = f"{args.out}_transcripts.txt"
 with open(tpath, "w") as f:
