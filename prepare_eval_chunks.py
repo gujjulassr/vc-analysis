@@ -14,10 +14,10 @@ Install:  pip install silero-vad soundfile librosa
 Usage:    python prepare_eval_chunks.py --in_dir raw_tracks --out_dir source_wavs
 
 Aligned outputs (converted files time-aligned with the sources): cut them at the
-SAME source timestamps so chunk filenames pair up exactly:
-  python prepare_eval_chunks.py --in_dir eval/source_full --out_dir eval/source_wavs \
-      --aligned eval/out_full_hindi=eval/infer_out_hindi \
-      --aligned eval/out_full_marathi=eval/infer_out_marathi
+SAME source timestamps so chunk filenames pair up exactly. ONE LANGUAGE PER RUN:
+  python prepare_eval_chunks.py \
+      --in_dir <eval_LANGUAGE>/source_full --out_dir <eval_LANGUAGE>/source_wavs \
+      --aligned <eval_LANGUAGE>/out_full_converted=<eval_LANGUAGE>/infer_out_converted
 """
 
 import argparse, glob, os
