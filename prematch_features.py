@@ -50,15 +50,21 @@ out_dir = args.out_dir or os.path.join(exp_dir, f"feature_prematched_{args.pool}
 os.makedirs(out_dir, exist_ok=True)
 
 # filelist format:  wav | feat | f0 | f0nsf | sid   (sid = last field, feat = 2nd)
-rows, by_sid = [], {}
+# Mute/silence rows (feat basename == mute.npy) are passed through UNCHANGED --
+# never prematch the silence token or use it in a retrieval pool.
+rows, by_sid, passthrough = [], {}, []
 with open(args.filelist) as f:
     for line in f:
         p = line.strip().split("|")
         if len(p) < 3:
             continue
+        if os.path.basename(p[1]).lower() == "mute.npy":
+            passthrough.append("|".join(p))          # keep as-is, don't retrieve
+            continue
         rows.append(p)
         by_sid.setdefault(p[-1], []).append(len(rows) - 1)
-print(f"{len(rows)} utterances, {len(by_sid)} speakers, pool={args.pool}")
+print(f"{len(rows)} utterances, {len(by_sid)} speakers, "
+      f"{len(passthrough)} mute rows passed through, pool={args.pool}")
 
 # preload all features (needed so 'other' can pool across speakers)
 feats = {}   # row_idx -> [T, dim]
@@ -134,7 +140,9 @@ for sid, idxs in by_sid.items():
 
 out_fl = os.path.join(exp_dir, f"filelist_prematched_{args.pool}.txt")
 with open(out_fl, "w") as f:
-    f.write("\n".join(new_lines) + "\n")
+    f.write("\n".join(new_lines + passthrough) + "\n")   # mute rows kept unchanged
 print(f"\nwrote {out_fl}\n      {out_dir}/")
-print("Next: train a NEW model on this filelist (copy it into a fresh exp folder as "
-      "filelist.txt, or point config.data.training_files at it).")
+print(f"{len(new_lines)} prematched + {len(passthrough)} mute rows = "
+      f"{len(new_lines) + len(passthrough)} total")
+print("Next: set PREMATCH in train.py (line ~144) and run "
+      f"PREMATCH={args.pool} AUX=1 bash train.sh")
