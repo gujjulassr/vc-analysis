@@ -169,9 +169,13 @@ for sid, idxs in by_sid.items():
             continue
         progress(sid, "indexing...")
         index = make_index(pool)
+        kk = min(args.k + 64, len(pool))        # coarse candidates, then EXACT re-rank
         for i in present:
-            _, I = index.search(feats[i], min(args.k, len(pool)))
-            save(sid, i, pool[I].mean(1))      # no self-exclusion: pool is other speakers
+            _, I = index.search(feats[i], kk)                    # faiss coarse: [T, kk] cand idx
+            d = ((feats[i][:, None, :] - pool[I]) ** 2).sum(-1)  # EXACT L2 on candidates [T, kk]
+            loc = np.argsort(d, axis=1)[:, :args.k]              # true k nearest (positions in kk)
+            sel = np.take_along_axis(I, loc, 1)                  # -> indices into pool
+            save(sid, i, pool[sel].mean(1))     # no self-exclusion: pool is other speakers
     else:                                       # same speaker: one CAPPED index over own frames
         order = list(present)
         if len(order) <= 1:                     # single utterance -> can't prematch
@@ -186,14 +190,14 @@ for sid, idxs in by_sid.items():
             sub = rng.choice(len(allf), args.pool_cap, replace=False)
             allf, allutt = allf[sub], allutt[sub]
         index = make_index(allf)
-        kk = min(args.k + 64, len(allf))        # +64 buffer to drop self frames after search
+        kk = min(args.k + 64, len(allf))        # coarse candidates, then EXACT re-rank + self-drop
         for i in order:
-            _, I = index.search(feats[i], kk)               # [T, kk]
-            selfmask = allutt[I] == i                        # True where neighbor is same utt
-            # stable-sort valid(False) before self(True), keep NN order -> first k are valid
-            keep = np.take_along_axis(I, np.argsort(selfmask, axis=1, kind="stable"), 1)
-            sel = keep[:, :args.k]                           # [T, k] non-self neighbors
-            save(sid, i, allf[sel].mean(1))                  # [T,k,dim] -> [T,dim]
+            _, I = index.search(feats[i], kk)                    # faiss coarse: [T, kk] cand idx
+            d = ((feats[i][:, None, :] - allf[I]) ** 2).sum(-1)  # EXACT L2 on candidates [T, kk]
+            d[allutt[I] == i] = np.inf                           # exclude self by exact mask
+            loc = np.argsort(d, axis=1)[:, :args.k]              # true k nearest non-self
+            sel = np.take_along_axis(I, loc, 1)                  # -> indices into allf
+            save(sid, i, allf[sel].mean(1))                      # [T,k,dim] -> [T,dim]
     if USE_GPU:
         del index                               # free GPU memory before next speaker
 if BAR:
