@@ -27,15 +27,10 @@ Writes:
 Then train a NEW model whose training filelist is filelist_prematched_<pool>.txt.
 """
 
-import argparse, os, time
+import argparse, os, sys, time
 
 import numpy as np
 import faiss
-
-try:
-    from tqdm import tqdm
-except Exception:                        # tqdm optional; falls back to per-speaker prints
-    tqdm = None
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--filelist", required=True, help="Applio filelist.txt")
@@ -99,28 +94,36 @@ for c, i in enumerate(all_idx, 1):
 new_lines = []
 N_TOTAL = len(rows)
 _t0 = time.time()
-_done = [0]                                  # mutable counter for the nested fn
-_step = max(1, N_TOTAL // 100)               # ~100 progress prints if no tqdm
-bar = tqdm(total=N_TOTAL, desc=f"prematch({args.pool})", unit="utt") if tqdm else None
-print(f"prematching {N_TOTAL} utterances "
-      f"({'tqdm bar' if bar else 'progress prints — pip install tqdm for a live bar'})",
-      flush=True)
+_done = 0
+_step = max(1, N_TOTAL // 200)
+_TTY = sys.stdout.isatty()                   # live \r bar on a terminal; plain lines in logs
+print(f"prematching {N_TOTAL} utterances, pool={args.pool}", flush=True)
+
+
+def progress(sid, extra=""):
+    """Single live line: bar + done/total + % + current speaker + rate + ETA."""
+    el = time.time() - _t0
+    rate = _done / el if el else 0
+    eta = (N_TOTAL - _done) / rate if rate else 0
+    fill = int(30 * _done / N_TOTAL) if N_TOTAL else 0
+    line = (f"[{'#' * fill}{'.' * (30 - fill)}] {_done}/{N_TOTAL} "
+            f"({100 * _done // max(N_TOTAL, 1)}%)  sid={sid}  "
+            f"{rate:.0f} utt/s  ETA {int(eta)}s  {extra}")
+    if _TTY:
+        sys.stdout.write("\r" + line + " " * 8)
+        sys.stdout.flush()
+    elif _done % _step == 0 or _done == N_TOTAL or extra:
+        print(line, flush=True)
 
 
 def save(sid, i, pm):
+    global _done
     outp = os.path.join(out_dir, f"{sid}_{i}.npy")
     np.save(outp, pm.astype(np.float32))
     p = list(rows[i]); p[1] = outp
     new_lines.append("|".join(p))
-    _done[0] += 1
-    if bar:
-        bar.update(1)
-    elif _done[0] % _step == 0 or _done[0] == N_TOTAL:      # always-visible fallback
-        el = time.time() - _t0
-        rate = _done[0] / el if el else 0
-        eta = (N_TOTAL - _done[0]) / rate if rate else 0
-        print(f"  prematch {_done[0]}/{N_TOTAL} ({100 * _done[0] // N_TOTAL}%) "
-              f"{rate:.0f} utt/s  ETA {eta:.0f}s", flush=True)
+    _done += 1
+    progress(sid)
 
 
 def make_index(pool):
@@ -152,11 +155,13 @@ def other_pool(sid):
 for sid, idxs in by_sid.items():
     present = [i for i in idxs if i in feats]
     if args.pool == "other":
+        progress(sid, "building pool...")
         pool = other_pool(sid)
         if pool is None:                       # only one speaker in the whole set
             for i in present:
                 save(sid, i, feats[i])
             continue
+        progress(sid, "indexing...")
         index = make_index(pool)
         for i in present:
             _, I = index.search(feats[i], min(args.k, len(pool)))
@@ -174,6 +179,7 @@ for sid, idxs in by_sid.items():
             for i in order:
                 save(sid, i, feats[i])
             continue
+        progress(sid, "indexing...")
         allf = np.concatenate(mats, 0)
         index = make_index(allf)
         for i in order:
@@ -188,8 +194,8 @@ for sid, idxs in by_sid.items():
             save(sid, i, allf[sel].mean(1))                 # [T,k,dim] -> [T,dim]
     if USE_GPU:
         del index                               # free GPU memory before next speaker
-if bar:
-    bar.close()
+if _TTY:
+    sys.stdout.write("\n")                      # leave the final progress line on screen
 
 out_fl = os.path.join(exp_dir, f"filelist_prematched_{args.pool}.txt")
 with open(out_fl, "w") as f:
