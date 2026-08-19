@@ -87,15 +87,24 @@ print(f"{len(rows)} utterances, {len(by_sid)} speakers, "
 
 # preload all features (needed so 'other' can pool across speakers)
 feats = {}   # row_idx -> [T, dim]
-for idxs in by_sid.values():
-    for i in idxs:
-        try:
-            feats[i] = np.load(rows[i][1]).astype(np.float32)
-        except Exception as e:
-            print(f"  skip (load fail) {rows[i][1]}: {e}")
+all_idx = [i for idxs in by_sid.values() for i in idxs]
+for c, i in enumerate(all_idx, 1):
+    try:
+        feats[i] = np.load(rows[i][1]).astype(np.float32)
+    except Exception as e:
+        print(f"  skip (load fail) {rows[i][1]}: {e}")
+    if c % 500 == 0 or c == len(all_idx):
+        print(f"  loading features {c}/{len(all_idx)}", flush=True)
 
 new_lines = []
-bar = tqdm(total=len(rows), desc=f"prematch({args.pool})", unit="utt") if tqdm else None
+N_TOTAL = len(rows)
+_t0 = time.time()
+_done = [0]                                  # mutable counter for the nested fn
+_step = max(1, N_TOTAL // 100)               # ~100 progress prints if no tqdm
+bar = tqdm(total=N_TOTAL, desc=f"prematch({args.pool})", unit="utt") if tqdm else None
+print(f"prematching {N_TOTAL} utterances "
+      f"({'tqdm bar' if bar else 'progress prints — pip install tqdm for a live bar'})",
+      flush=True)
 
 
 def save(sid, i, pm):
@@ -103,8 +112,15 @@ def save(sid, i, pm):
     np.save(outp, pm.astype(np.float32))
     p = list(rows[i]); p[1] = outp
     new_lines.append("|".join(p))
+    _done[0] += 1
     if bar:
         bar.update(1)
+    elif _done[0] % _step == 0 or _done[0] == N_TOTAL:      # always-visible fallback
+        el = time.time() - _t0
+        rate = _done[0] / el if el else 0
+        eta = (N_TOTAL - _done[0]) / rate if rate else 0
+        print(f"  prematch {_done[0]}/{N_TOTAL} ({100 * _done[0] // N_TOTAL}%) "
+              f"{rate:.0f} utt/s  ETA {eta:.0f}s", flush=True)
 
 
 def make_index(pool):
@@ -133,9 +149,7 @@ def other_pool(sid):
     return np.concatenate(chunks, 0) if chunks else None
 
 
-t0 = time.time()
-n_spk = len(by_sid)
-for si, (sid, idxs) in enumerate(by_sid.items(), 1):
+for sid, idxs in by_sid.items():
     present = [i for i in idxs if i in feats]
     if args.pool == "other":
         pool = other_pool(sid)
@@ -174,9 +188,6 @@ for si, (sid, idxs) in enumerate(by_sid.items(), 1):
             save(sid, i, allf[sel].mean(1))                 # [T,k,dim] -> [T,dim]
     if USE_GPU:
         del index                               # free GPU memory before next speaker
-    if bar is None:                             # no tqdm -> coarse per-speaker log
-        print(f"[{si}/{n_spk}] sid {sid}: {len(present)} utts prematched "
-              f"({args.pool}, {time.time()-t0:.0f}s elapsed)", flush=True)
 if bar:
     bar.close()
 
