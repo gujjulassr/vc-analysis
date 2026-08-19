@@ -40,8 +40,9 @@ ap.add_argument("--k", type=int, default=4, help="neighbors to average per frame
 ap.add_argument("--pool", choices=["same", "other"], default="same",
                 help="'same' = target speaker's other utts (kNN-VC); "
                      "'other' = OTHER speakers -> forces content-path disentanglement")
-ap.add_argument("--pool_cap", type=int, default=100000,
-                help="max pool frames for --pool other (subsampled per speaker if larger)")
+ap.add_argument("--pool_cap", type=int, default=20000,
+                help="max search-pool frames per speaker (BOTH modes; subsampled if larger). "
+                     "Bounds each search so it can't hang; 20k is plenty for good retrieval.")
 ap.add_argument("--cpu", action="store_true", help="force CPU even if faiss-gpu is present")
 args = ap.parse_args()
 rng = np.random.default_rng(0)
@@ -166,32 +167,28 @@ for sid, idxs in by_sid.items():
         for i in present:
             _, I = index.search(feats[i], min(args.k, len(pool)))
             save(sid, i, pool[I].mean(1))      # no self-exclusion: pool is other speakers
-    else:                                       # same speaker: ONE index over own frames
-        # concat the speaker's frames, remembering each utterance's [start,end) range
-        mats, ranges, order = [], {}, []
-        start = 0
-        for i in present:
-            a = feats[i]
-            ranges[i] = (start, start + len(a))
-            mats.append(a); order.append(i)
-            start += len(a)
+    else:                                       # same speaker: one CAPPED index over own frames
+        order = list(present)
         if len(order) <= 1:                     # single utterance -> can't prematch
             for i in order:
                 save(sid, i, feats[i])
             continue
         progress(sid, "indexing...")
-        allf = np.concatenate(mats, 0)
+        # pool = the speaker's frames, tagged with which utterance each came from
+        allf = np.concatenate([feats[i] for i in order], 0)
+        allutt = np.concatenate([np.full(len(feats[i]), i) for i in order])
+        if len(allf) > args.pool_cap:           # CAP so a big speaker can't hang the search
+            sub = rng.choice(len(allf), args.pool_cap, replace=False)
+            allf, allutt = allf[sub], allutt[sub]
         index = make_index(allf)
+        kk = min(args.k + 64, len(allf))        # +64 buffer to drop self frames after search
         for i in order:
-            s, e = ranges[i]
-            q = feats[i]
-            kk = min(args.k + (e - s), len(allf), 2048)    # drop self; 2048 = GPU search cap
-            _, I = index.search(q, kk)                      # [T, kk]
-            selfmask = (I >= s) & (I < e)                   # True where neighbor is self
+            _, I = index.search(feats[i], kk)               # [T, kk]
+            selfmask = allutt[I] == i                        # True where neighbor is same utt
             # stable-sort valid(False) before self(True), keep NN order -> first k are valid
             keep = np.take_along_axis(I, np.argsort(selfmask, axis=1, kind="stable"), 1)
-            sel = keep[:, :args.k]                          # [T, k] non-self neighbors
-            save(sid, i, allf[sel].mean(1))                 # [T,k,dim] -> [T,dim]
+            sel = keep[:, :args.k]                           # [T, k] non-self neighbors
+            save(sid, i, allf[sel].mean(1))                  # [T,k,dim] -> [T,dim]
     if USE_GPU:
         del index                               # free GPU memory before next speaker
 if _TTY:
