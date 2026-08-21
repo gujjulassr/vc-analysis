@@ -35,9 +35,13 @@ Folder rules:
 
 Outputs (<out> = --out prefix):
   <out>_per_utt.csv       every chunk x system x metric (raw data)
+  <out>_per_track.csv     ONE row per AUDIO/track x system: SECS on the
+                          concatenated voiced speech (chunks are VAD segments,
+                          so silence cannot dilute), CER on joined transcripts,
+                          duration-weighted UTMOS
   <out>_averages.csv      one row per system: mean/std of every metric
   <out>_summary.txt       aggregate table (nan-safe), Wilcoxon tests,
-                          5 worst utterances by CER with transcripts
+                          per-track table, 5 worst utterances by CER
   <out>_transcripts.txt   full SRC vs system transcripts per chunk
                           (+ REF transcripts when --transcribe_refs)
 
@@ -50,6 +54,7 @@ import argparse, csv, glob, os, re, unicodedata
 import numpy as np
 import torch
 import librosa
+import soundfile as sf
 from scipy import stats
 
 # ---------------- args ----------------
@@ -242,6 +247,85 @@ with open(apath, "w", newline="") as f:
             row += [f"{np.nanmean(v):.4f}", f"{np.nanstd(v):.4f}"]
         w.writerow(row)
 print(f"wrote {apath}")
+
+# ---------------- per-track (audio-wise) metrics: voiced speech only ----------------
+# ONE row per TRACK: chunks are VAD speech segments, so concatenating a track's
+# chunks gives exactly its voiced audio -- silence cannot dilute the score.
+from collections import defaultdict
+
+track_chunks = defaultdict(list)
+for name in names:
+    track_chunks[re.sub(r"_\d+\.wav$", "", name)].append(name)
+
+def cat_emb(paths):
+    """One speaker embedding over the CONCATENATED voiced audio of a track."""
+    return spk.embed_utterance(np.concatenate([preprocess_wav(p) for p in paths]))
+
+_dur = {n: sf.info(os.path.join(args.source, n)).duration for n in names}
+_um = {(r["system"], r["name"]): r["utmos"] for r in rows}
+
+trows = []
+for tname in sorted(track_chunks):
+    cn = sorted(track_chunks[tname])
+    w_t = np.array([_dur[n] for n in cn])
+    src_e_t = cat_emb([os.path.join(args.source, n) for n in cn])
+    tgt_e_t = np.mean([target_emb(n) for n in cn], axis=0)
+    src_join = " ".join(texts[("src", n)] for n in cn).strip()
+    for sysname, d in systems:
+        e_t = cat_emb([os.path.join(d, n) for n in cn])
+        hyp_join = " ".join(texts[(sysname, n)] for n in cn).strip()
+        trows.append(dict(
+            track=tname, system=sysname, n_chunks=len(cn),
+            speech_sec=round(float(w_t.sum()), 1),
+            secs_tgt=cos(e_t, tgt_e_t), secs_src=cos(e_t, src_e_t),
+            gap=cos(e_t, tgt_e_t) - cos(e_t, src_e_t),
+            cer=jiwer.cer(src_join, hyp_join) if src_join else float("nan"),
+            wer=jiwer.wer(src_join, hyp_join) if src_join else float("nan"),
+            utmos=float(np.average([_um[(sysname, n)] for n in cn], weights=w_t)),
+        ))
+
+trk_csv = f"{args.out}_per_track.csv"
+with open(trk_csv, "w", newline="") as f:
+    w = csv.DictWriter(f, fieldnames=list(trows[0].keys()))
+    w.writeheader()
+    w.writerows(trows)
+print(f"wrote {trk_csv}")
+
+def tcol(sysname, metric):
+    return np.array([r[metric] for r in trows if r["system"] == sysname])
+
+tlines = ["\n===== PER-TRACK (audio-wise, voiced speech only) ====="]
+tlines.append(f"{'track':28s} {'system':12s} " +
+              " ".join(f"{m:>8s}" for m in METRICS) + "  n_chunks speech_s")
+for r in trows:
+    tlines.append(f"{r['track'][:28]:28s} {r['system']:12s} " +
+                  " ".join(f"{r[m]:8.3f}" for m in METRICS) +
+                  f"  {r['n_chunks']:8d} {r['speech_sec']:8.1f}")
+tlines.append(f"\ntrack-level means ({len(track_chunks)} tracks):")
+tlines.append(f"{'system':12s} " + " ".join(f"{m:>14s}" for m in METRICS))
+for sysname, _ in systems:
+    vals = [tcol(sysname, m) for m in METRICS]
+    tlines.append(f"{sysname:12s} " + " ".join(
+        f"{np.nanmean(v):7.3f}±{np.nanstd(v):5.3f}" for v in vals))
+for sysname, _ in systems[1:]:
+    tlines.append(f"\ntrack-level Wilcoxon: {base} vs {sysname} "
+                  f"(n={len(track_chunks)} tracks -- low power, descriptive; "
+                  f"chunk-level test above is primary)")
+    for m in METRICS:
+        a, b = tcol(base, m), tcol(sysname, m)
+        ok = ~(np.isnan(a) | np.isnan(b))
+        a, b = a[ok], b[ok]
+        try:
+            p = stats.wilcoxon(a, b).pvalue if len(a) and not np.allclose(a, b) else 1.0
+        except ValueError:
+            p = float("nan")
+        tlines.append(f"  {m:10s} {base}={a.mean():.3f} {sysname}={b.mean():.3f} "
+                      f"diff={b.mean() - a.mean():+.4f}  p={p:.4f}")
+
+treport = "\n".join(tlines)
+print(treport)
+with open(f"{args.out}_summary.txt", "a") as f:
+    f.write(treport + "\n")
 
 # ---------------- full transcripts dump: SRC vs each system (vs REF) ----------------
 tpath = f"{args.out}_transcripts.txt"

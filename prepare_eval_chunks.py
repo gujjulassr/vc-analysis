@@ -73,9 +73,12 @@ for path in sorted(glob.glob(os.path.join(args.in_dir, "*.wav"))):
 
     # enforce min/max chunk length
     chunks = []
+    dropped_n, dropped_s = 0, 0.0
     for a, b in merged:
         dur = (b - a) / sr
         if dur < args.min_len:
+            dropped_n += 1
+            dropped_s += dur
             continue
         step = int(args.max_len * sr)
         while b - a > step:                    # split over-long chunks
@@ -104,8 +107,14 @@ for path in sorted(glob.glob(os.path.join(args.in_dir, "*.wav"))):
             a2, b2 = int(a / sr * osr), int(b / sr * osr)
             sf.write(os.path.join(outdir, f"{base}_{i:03d}.wav"),
                      oa[a2:b2], osr, subtype="PCM_16")
-    print(f"{base}: {len(chunks)} chunks "
-          f"({sum(b - a for a, b in chunks) / sr:.1f}s speech of {len(audio) / sr:.1f}s)")
+    raw_speech = sum(b - a for a, b in merged) / sr
+    kept = sum(b - a for a, b in chunks) / sr
+    msg = (f"{base}: {len(chunks)} chunks kept ({kept:.1f}s) | "
+           f"raw VAD speech {raw_speech:.1f}s of {len(audio) / sr:.1f}s")
+    if dropped_n:
+        msg += (f" | DROPPED {dropped_n} segs ({dropped_s:.1f}s) < {args.min_len:.1f}s"
+                f" -> rerun with --min_len 1.0 --merge_gap 1.2 to keep short lines")
+    print(msg)
     total += len(chunks)
 
 print(f"\ntotal: {total} chunks in {args.out_dir}")
