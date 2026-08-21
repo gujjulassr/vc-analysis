@@ -44,6 +44,10 @@ ap.add_argument("--vad_threshold", type=float, default=0.35,
                 help="lower (e.g. 0.2) rescues quiet stems")
 ap.add_argument("--min_speech", type=float, default=1.0,
                 help="below this many voiced seconds the row is marked NaN")
+ap.add_argument("--confusion", action="store_true",
+                help="report which track's refs each output matches BEST -- catches "
+                     "wrong ref mapping (expects one artist per track; tracks that "
+                     "fall back to the global centroid are not distinguishable)")
 args = ap.parse_args()
 
 systems = []
@@ -108,6 +112,8 @@ for _, d in systems:
 names = sorted(names or [])
 assert names, "no matching filenames across system dirs"
 
+track_refs = {os.path.splitext(n)[0]: target_emb(n) for n in names}  # for --confusion
+
 rows = []
 for name in names:
     tgt = target_emb(name)
@@ -129,6 +135,12 @@ for name in names:
             row["gap"] = round(row["secs_tgt"] - row["secs_src"], 4) if has else float("nan")
             row["src_tgt_baseline"] = src_tgt
             row["leak_excess"] = round(row["secs_src"] - src_tgt, 4) if has else float("nan")
+        if args.confusion and e is not None:
+            best = max(track_refs, key=lambda t: cos(e, track_refs[t]))
+            own = os.path.splitext(name)[0]
+            row["best_ref"] = best
+            if best != own:
+                row["best_ref"] += "  <<< MISMATCH"
         rows.append(row)
         note = "" if e is not None else "   <- too little voiced audio, similarity skipped"
         print(f"{name:35s} {sysname:12s} speech={sec:7.1f}s  " +
