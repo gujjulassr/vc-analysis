@@ -46,7 +46,11 @@ ap.add_argument("--min_speech", type=float, default=1.0,
                 help="below this many voiced seconds the row is marked NaN")
 args = ap.parse_args()
 
-systems = [s.split("=", 1) for s in args.system]
+systems = []
+for s in args.system:
+    if "=" not in s:
+        ap.error(f"--system needs name=dir (e.g. --system base=out_full_converted), got: {s!r}")
+    systems.append(tuple(s.split("=", 1)))
 device = "cuda" if torch.cuda.is_available() else "cpu"
 vad = load_silero_vad()
 enc = VoiceEncoder(device)
