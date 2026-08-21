@@ -116,6 +116,9 @@ for name in names:
         sp = os.path.join(args.source, name)
         if os.path.exists(sp):
             src_e, _ = voiced_emb(sp)
+    # baseline: how similar the SOURCE and TARGET voices are to each other.
+    # secs_src is only "leak" to the extent it EXCEEDS this number.
+    src_tgt = round(cos(src_e, tgt), 4) if src_e is not None else float("nan")
     for sysname, d in systems:
         e, sec = voiced_emb(os.path.join(d, name))
         row = {"audio": name, "system": sysname, "speech_sec": round(sec, 1),
@@ -124,6 +127,8 @@ for name in names:
             has = e is not None and src_e is not None
             row["secs_src"] = round(cos(e, src_e), 4) if has else float("nan")
             row["gap"] = round(row["secs_tgt"] - row["secs_src"], 4) if has else float("nan")
+            row["src_tgt_baseline"] = src_tgt
+            row["leak_excess"] = round(row["secs_src"] - src_tgt, 4) if has else float("nan")
         rows.append(row)
         note = "" if e is not None else "   <- too little voiced audio, similarity skipped"
         print(f"{name:35s} {sysname:12s} speech={sec:7.1f}s  " +
