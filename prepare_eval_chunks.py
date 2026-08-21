@@ -34,6 +34,9 @@ ap.add_argument("--out_dir", required=True, help="output folder for speech chunk
 ap.add_argument("--min_len", type=float, default=2.0, help="drop chunks shorter (s)")
 ap.add_argument("--max_len", type=float, default=20.0, help="split chunks longer (s)")
 ap.add_argument("--merge_gap", type=float, default=0.6, help="merge if gap < (s)")
+ap.add_argument("--vad_threshold", type=float, default=0.35,
+                help="Silero speech-probability threshold; LOWER (e.g. 0.2) "
+                     "rescues quiet/soft-spoken stems that VAD misses")
 ap.add_argument("--aligned", action="append", default=[],
                 help="indir=outdir: full-length dirs time-aligned with the source; "
                      "cut at the SOURCE's timestamps (repeatable)")
@@ -58,7 +61,7 @@ for path in sorted(glob.glob(os.path.join(args.in_dir, "*.wav"))):
     w16 = librosa.resample(audio, orig_sr=sr, target_sr=16000)
     ts = get_speech_timestamps(
         torch.from_numpy(w16).float(), vad, sampling_rate=16000,
-        threshold=0.35, min_speech_duration_ms=250,
+        threshold=args.vad_threshold, min_speech_duration_ms=250,
         min_silence_duration_ms=200, speech_pad_ms=150)
     sc = sr / 16000
     segs = [(int(t["start"] * sc), int(t["end"] * sc)) for t in ts]
